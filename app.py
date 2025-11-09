@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from groq import Groq
+import google.generativeai as genai
 from dotenv import load_dotenv
 
 # Load environment variables from .env file (for local development)
@@ -9,24 +9,24 @@ load_dotenv()
 # Get API key from environment or Streamlit secrets
 def get_api_key():
     # Try environment variable first (local development)
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
 
     # If not found, try Streamlit secrets (cloud deployment)
     if not api_key:
         try:
-            api_key = st.secrets["GROQ_API_KEY"]
+            api_key = st.secrets["GEMINI_API_KEY"]
         except (KeyError, FileNotFoundError):
             pass
 
     return api_key
 
-# Initialize Groq client
+# Initialize Gemini client
 api_key = get_api_key()
 if not api_key:
-    st.error("❌ GROQ_API_KEY not found! Please add it to Streamlit secrets or your .env file.")
+    st.error("❌ GEMINI_API_KEY not found! Please add it to Streamlit secrets or your .env file.")
     st.stop()
 
-client = Groq(api_key=api_key)
+genai.configure(api_key=api_key)
 
 # Set page configuration
 st.set_page_config(
@@ -112,7 +112,7 @@ with st.sidebar:
     🎮 **George's Gaming Buddy**
 
     Powered by:
-    - **Groq API** (llama-3.3-70b-versatile)
+    - **Google Gemini API** (gemini-2.5-flash)
     - **Streamlit** for the interface
 
     Your personal gaming companion! 🚀
@@ -144,25 +144,46 @@ if prompt := st.chat_input("💬 Ask me anything about gaming..."):
         full_response = ""
 
         try:
-            # Call Groq API with streaming
-            stream = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=st.session_state.messages,
-                temperature=0.7,
-                max_tokens=2048,
-                stream=True
+            # Build chat history for Gemini
+            gemini_history = []
+            system_instruction = None
+
+            for msg in st.session_state.messages:
+                if msg["role"] == "system":
+                    system_instruction = msg["content"]
+                elif msg["role"] == "user":
+                    gemini_history.append({
+                        "role": "user",
+                        "parts": [msg["content"]]
+                    })
+                elif msg["role"] == "assistant":
+                    gemini_history.append({
+                        "role": "model",
+                        "parts": [msg["content"]]
+                    })
+
+            # Initialize model with system instruction
+            model = genai.GenerativeModel(
+                model_name='models/gemini-2.5-flash',
+                system_instruction=system_instruction
             )
 
+            # Start chat with history (excluding the current message)
+            chat = model.start_chat(history=gemini_history)
+
+            # Send the current message and get streaming response
+            response = chat.send_message(prompt, stream=True)
+
             # Stream the response
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
+            for chunk in response:
+                if hasattr(chunk, 'text') and chunk.text:
+                    full_response += chunk.text
                     message_placeholder.markdown(full_response + "▌")
 
             message_placeholder.markdown(full_response)
 
         except Exception as e:
-            full_response = f"❌ Error: {str(e)}\n\nPlease check your GROQ_API_KEY in the .env file."
+            full_response = f"❌ Error: {str(e)}\n\nPlease check your GEMINI_API_KEY in the .env file."
             message_placeholder.markdown(full_response)
 
     # Add assistant response to chat history
